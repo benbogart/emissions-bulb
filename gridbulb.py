@@ -1,76 +1,64 @@
+from requests.api import get
 import tinytuya
 import json
-import pickle
 import requests
 from requests.auth import HTTPBasicAuth
 from time import sleep
-from datetime import datetime
-import csv
-import os
 
 
-scaling_factor = 255/100 # adjust if you don't want to use the full color range
-csv_cols = ["freq", "ba", "percent", "point_time"]
-update_freq = 100
+SCALING_FACTOR = 255/100 # adjust to limit color range
+UPDATE_FREQUENCY = 300 # seconds between updates
 
-with open('passwords', 'rb') as f:
-    username, password = pickle.load(f)
+LATITUDE = [YOUR LATITUDE]
+LONGITUDE = [YOUR LONGITUDE]
 
-print('Establishing connection to bulb...')
-b = tinytuya.BulbDevice('42313382e09806b2e707', '192.168.55.126', '34b08c42badc19b0')
-b.set_version(3.3)
-data = b.status()
-print(f'set status result {data}')
+WATTTIME_USERNAME = '[YOUR WATTTIME USERNAME]'
+WATTTIME_PASSWORD = '[YOUR WATTTIME PASSWORD]'
 
-def update_watttime_bulb(b):
-    
-    # reauthenticate watttime
+BULB_DEVICE_ID = '[YOUR BULBS DEVICE ID]' # string
+BULB_ADDRESS = '[YOUR BULBS IP ADDRESS]' # string
+BULB_LOCAL_KEY = '[YOUR BULBS LOCAL KEY]' # string
+BULB_VERSION = [YOUR BULBS VERSION] # as float (without '')
+
+
+def get_bulb():
+    bulb = tinytuya.BulbDevice(BULB_DEVICE_ID, BULB_ADDRESS, BULB_LOCAL_KEY)
+    bulb.set_version(3.3)
+    return bulb
+
+
+def get_watttime_token():
     login_url = 'https://api2.watttime.org/v2/login'
-    rsp = requests.get(login_url, auth=HTTPBasicAuth(username, password))
+    auth = HTTPBasicAuth(WATTTIME_USERNAME, WATTTIME_PASSWORD)
+    rsp = requests.get(login_url, auth=auth)
     token = rsp.json()['token']
+
+    return token
+
+
+def get_watttime_pct():
     
+    token = get_watttime_token()
     headers = {'Authorization': 'Bearer {}'.format(token)}
-    ba = 'MISO_INDIANAPOLIS'
-
     index_url = 'https://api2.watttime.org/index'
-    params = {'ba': ba}
+    params = {'latitude': LATITUDE, 
+              'longitude': LONGITUDE,}
+    
     rsp=requests.get(index_url, headers=headers, params=params)
-    
-    wt = json.loads(rsp.text)
-    global update_freq
-    update_freq = int(wt['freq'])
-    # log response
-    # log setup
-    write_header = False
-    if not os.path.exists('log'):
-        write_header = True
-    
-    with open('log', 'a') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=wt.keys())
-        if write_header:
-            print('creating log file....')
-            writer.writeheader()
-        print(f'writing row: {wt}')
-        writer.writerow(wt)
-    
-    
-    pct = int(wt['percent'])
-    
-    r = pct * scaling_factor
+    percent = json.loads(rsp.text)['percent']
+    return int(percent)
+
+def calculate_rgb(watttime_pct):
+    r = watttime_pct * SCALING_FACTOR
     g = 255 - r
+    b = 0
     
-    return pct, b.set_colour(r,g,0)
+    return r,g,b
 
-for i in range(2):
-    pct, result = update_watttime_bulb(b)
-    
-    # datetime object containing current date and time
-    now = datetime.now()
-
-    # dd/mm/YY H:M:S
-    dt_string = now.strftime("%d/%m/%Y %H:%M:%S")
-
-    print(f'Iteration {i+1} ({dt_string}): {pct} pct')
-    
-    print(f'sleeping for {update_freq}')
-    sleep(update_freq)
+# repeat forever
+while True:
+    bulb = get_bulb()
+    watttime_pct = get_watttime_pct()
+    r,g,b = calculate_rgb(watttime_pct)
+    bulb.set_colour(r,g,b)
+    sleep(UPDATE_FREQUENCY)
